@@ -151,7 +151,8 @@ def discover_ngos(
 def my_ngo(current_user: User = Depends(ngo_required)):
     """Return basic profile for the logged-in NGO user."""
     return {
-        "id":             current_user.id,
+        "id":             NGO.id,
+        "user_id":             current_user.id,
         "email":          current_user.email,
         "role":           current_user.role,
         "is_active":      current_user.is_active,
