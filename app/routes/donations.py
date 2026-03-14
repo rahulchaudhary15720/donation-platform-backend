@@ -15,32 +15,34 @@ from app.utils.email_service import send_email
 
 # router = APIRouter(prefix="/donations", tags=["Donations"])
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import HTTPException, Depends
 from sqlalchemy.orm import Session, joinedload
-from app.core.security import get_db, get_current_user
-from app.models.donation import Donation
+from app.models.ngo import NGO
 from app.models.campaign import Campaign
+from app.models.donation import Donation
 from app.models.milestone import Milestone
+from app.core.security import get_current_user, get_db
 
 router = APIRouter(prefix="/donations", tags=["Donations"])
 
 @router.get("/ngo-donation-dashboard")
 def ngo_donation_dashboard(user=Depends(get_current_user), db: Session = Depends(get_db)):
-    """
-    Returns all donations for campaigns owned by the logged-in NGO.
-    Marks donations as anonymous if donor chose anonymous or email not provided.
-    """
-    if not user or not getattr(user, "ngo_id", None):
+    # 1️⃣ Check user role
+    if user.role != "ngo":
+        raise HTTPException(status_code=403, detail="Access denied: User is not an NGO")
+
+    # 2️⃣ Fetch NGO associated with logged-in user
+    ngo = db.query(NGO).filter(NGO.user_id == user.id).first()
+    if not ngo:
         raise HTTPException(status_code=403, detail="User is not associated with any NGO")
 
-    # 1️⃣ Get campaigns owned by this NGO
-    campaigns = db.query(Campaign).filter(Campaign.ngo_id == user.ngo_id).all()
+    # 3️⃣ Get campaigns for this NGO
+    campaigns = db.query(Campaign).filter(Campaign.ngo_id == ngo.id).all()
     campaign_ids = [c.id for c in campaigns]
-
     if not campaign_ids:
         return {"donations": [], "total_raised": 0, "total_donors": 0, "avg_donation": 0}
 
-    # 2️⃣ Fetch donations for these campaigns
+    # 4️⃣ Get donations for these campaigns
     donations = (
         db.query(Donation)
         .options(joinedload(Donation.campaign), joinedload(Donation.milestone))
@@ -49,28 +51,22 @@ def ngo_donation_dashboard(user=Depends(get_current_user), db: Session = Depends
         .all()
     )
 
-    # 3️⃣ Prepare donation list for frontend
+    # 5️⃣ Prepare frontend data
     donation_list = []
     donor_ids = set()
     total_raised = 0
 
     for d in donations:
-        # Safely handle missing campaign/milestone
-        campaign_info = {"id": d.campaign.id, "title": d.campaign.title} if d.campaign else {"id": None, "title": "Unknown"}
-        milestone_info = {"id": d.milestone.id, "title": d.milestone.title, "status": getattr(d.milestone, "status", None)} if d.milestone else {"id": None, "title": "Unknown", "status": None}
-
         is_anonymous = d.is_anonymous or not bool(d.hashed_email)
-
         donation_list.append({
             "id": d.id,
             "transaction_id": d.transaction_id,
             "amount": d.amount,
             "is_anonymous": is_anonymous,
-            "campaign": campaign_info,
-            "milestone": milestone_info,
+            "campaign": {"id": d.campaign.id, "title": d.campaign.title} if d.campaign else {"id": None, "title": "Unknown"},
+            "milestone": {"id": d.milestone.id, "title": d.milestone.title, "status": getattr(d.milestone, "status", None)} if d.milestone else {"id": None, "title": "Unknown", "status": None},
             "created_at": d.created_at.isoformat(),
         })
-
         total_raised += d.amount
         if d.user_id and not is_anonymous:
             donor_ids.add(d.user_id)
@@ -84,7 +80,6 @@ def ngo_donation_dashboard(user=Depends(get_current_user), db: Session = Depends
         "total_donors": total_donors,
         "avg_donation": avg_donation,
     }
-
 
 # ── 1. POST /donations/ ── Make a donation ────────────────
 @router.post("/")
