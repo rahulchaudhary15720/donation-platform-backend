@@ -4,6 +4,7 @@ from app.db.init_db import init_db
 from app.routes import auth, ngos, campaigns, milestones, donations, admin, users, payments
 from app.core.config import settings
 import sys
+from sqlalchemy import text
 
 app = FastAPI(
     title="Donation & Charity Platform",
@@ -72,7 +73,7 @@ async def health_check():
     try:
         from app.db.session import engine
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
