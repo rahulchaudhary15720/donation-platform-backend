@@ -283,11 +283,29 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
         .first()
     )
 
+    user_email = None
+    if verification:
+        user = db.get(User, verification.user_id)
+        if user:
+            user_email = user.email
+
     if not verification:
-        raise HTTPException(400, "Invalid or already used verification token")
+        raise HTTPException(
+            400,
+            detail={
+                "message": "Invalid or already used verification token",
+                "email": user_email
+            }
+        )
 
     if verification.expires_at < _utcnow():
-        raise HTTPException(400, "Verification token has expired")
+        raise HTTPException(
+            400,
+            detail={
+                "message": "Verification token has expired",
+                "email": user_email
+            }
+        )
 
     # Mark as verified
     verification.verified_at = _utcnow()
@@ -296,21 +314,22 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
     user = db.get(User, verification.user_id)
     if not user:
         raise HTTPException(404, "User not found")
-    
+
     user.email_verified = True
     db.commit()
-    
+
     # Send welcome email
     try:
         send_welcome_email(user.email, user.role)
     except Exception as e:
         logger.error("Failed to send welcome email to user_id=%s: %s", user.id, e)
-    
+
     return {
         "message": "Email verified successfully",
         "email": user.email,
         "role": user.role
     }
+
 
 @router.post("/resend-verification", dependencies=[Depends(rate_limit("auth:resend", limit=3, window_seconds=300))])
 def resend_verification(payload: ResendVerificationRequest, db: Session = Depends(get_db)):
