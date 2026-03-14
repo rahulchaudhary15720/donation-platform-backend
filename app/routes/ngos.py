@@ -147,18 +147,34 @@ def discover_ngos(
 #     return {"message": "NGO registered. Awaiting admin approval"}
 
 
-@router.get("/me", response_model=None)
-def my_ngo(current_user: User = Depends(ngo_required)):
+@router.get("/me")
+def my_ngo(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(ngo_required)
+):
     """Return basic profile for the logged-in NGO user."""
-    return {
-        "id":             NGO.id,
-        "user_id":             current_user.id,
-        "email":          current_user.email,
-        "role":           current_user.role,
-        "is_active":      current_user.is_active,
-        "email_verified": current_user.email_verified,
-    }
 
+    ngo = db.query(NGO).filter(NGO.user_id == current_user.id).first()
+
+    if not ngo:
+        raise HTTPException(status_code=404, detail="NGO profile not found")
+
+    return {
+        "id": ngo.id,
+        "user_id": ngo.user_id,
+        "email": current_user.email,
+        "role": current_user.role,
+        "is_active": current_user.is_active,
+        "email_verified": current_user.email_verified,
+        "name": ngo.name,
+        "description": ngo.description,
+        "registration_number": ngo.registration_number,
+        "address": ngo.address,
+        "phone": ngo.phone,
+        "website": ngo.website,
+        "trust_score": ngo.trust_score,
+        "campaign_count": ngo.campaign_count,
+    }
 
 @router.post("/profile")
 def create_profile(
