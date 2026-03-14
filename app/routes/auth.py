@@ -277,17 +277,36 @@ def logout(request: Request, response: Response, payload: RefreshRequest | None 
 def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
     """Verify user's email address using the verification token"""
     verification = (
-        db.query(EmailVerification)
-        .filter(EmailVerification.token == payload.token)
-        .filter(EmailVerification.verified_at.is_(None))
-        .first()
+    db.query(EmailVerification)
+    .filter(EmailVerification.token == payload.token)
+    .first()  # get record even if verified
     )
 
-    if not verification:
-        raise HTTPException(400, "Invalid or already used verification token")
+    user_email = None
+    if verification:
+        user = db.get(User, verification.user_id)
+        if user:
+            user_email = user.email
 
+    # Check if token is invalid or already used
+    if not verification or verification.verified_at is not None:
+        raise HTTPException(
+            400,
+            detail={
+                "message": "Invalid or already used verification token",
+                "email": user_email  # now includes email if available
+            }
+        )
+
+    # Check if token expired
     if verification.expires_at < _utcnow():
-        raise HTTPException(400, "Verification token has expired")
+        raise HTTPException(
+            400,
+            detail={
+                "message": "Verification token has expired",
+                "email": user_email
+            }
+        )
 
     # Mark as verified
     verification.verified_at = _utcnow()
