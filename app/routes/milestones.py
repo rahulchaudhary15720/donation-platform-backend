@@ -107,21 +107,73 @@ class MilestoneCreate(BaseModel):
 
 
 
+# @router.post("/{campaign_id}/milestones/batch")
+# def create_milestones(
+#     campaign_id: int,
+#     payload: List[MilestoneCreate],  # <-- now a list
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(ngo_required)
+# ):
+    
+#     # Enforce minimum 3 milestones
+#     if len(payload) < 3:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail="At least 3 milestones are required"
+#         )
+    
+#     # Get NGO
+#     ngo = db.query(NGO).filter(NGO.user_id == current_user.id).first()
+#     if not ngo:
+#         raise HTTPException(400, "NGO profile not found")
+
+#     # Get Campaign
+#     campaign = db.query(Campaign).get(campaign_id)
+#     if not campaign:
+#         raise HTTPException(404, "Campaign not found")
+
+#     # Ownership check
+#     if campaign.ngo_id != ngo.id:
+#         raise HTTPException(403, "Not allowed")
+
+#     # Count existing milestones
+#     existing_count = db.query(Milestone)\
+#         .filter(Milestone.campaign_id == campaign_id)\
+#         .count()
+
+#     created_milestones = []
+
+#     for i, m_data in enumerate(payload):
+#         milestone = Milestone(
+#             campaign_id=campaign_id,
+#             title=m_data.title,
+#             description=m_data.description,
+#             target_amount=m_data.target_amount,
+#             order_number=existing_count + i + 1,
+#             status="active" if existing_count + i == 0 else "locked"
+#         )
+#         db.add(milestone)
+#         created_milestones.append(milestone)
+
+#     db.commit()
+
+#     # Return all created milestones
+#     return {
+#         "message": f"{len(created_milestones)} milestones created",
+#         "milestones": [
+#             {"id": m.id, "order_number": m.order_number, "title": m.title}
+#             for m in created_milestones
+#         ]
+#     }
+
 @router.post("/{campaign_id}/milestones/batch")
 def create_milestones(
     campaign_id: int,
-    payload: List[MilestoneCreate],  # <-- now a list
+    payload: List[MilestoneCreate],
     db: Session = Depends(get_db),
     current_user: User = Depends(ngo_required)
 ):
-    
-    # Enforce minimum 3 milestones
-    if len(payload) < 3:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least 3 milestones are required"
-        )
-    
+
     # Get NGO
     ngo = db.query(NGO).filter(NGO.user_id == current_user.id).first()
     if not ngo:
@@ -141,6 +193,13 @@ def create_milestones(
         .filter(Milestone.campaign_id == campaign_id)\
         .count()
 
+    # Enforce minimum 3 milestones only for new campaigns
+    if existing_count == 0 and len(payload) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least 3 milestones are required for a new campaign"
+        )
+
     created_milestones = []
 
     for i, m_data in enumerate(payload):
@@ -157,7 +216,6 @@ def create_milestones(
 
     db.commit()
 
-    # Return all created milestones
     return {
         "message": f"{len(created_milestones)} milestones created",
         "milestones": [
@@ -165,6 +223,7 @@ def create_milestones(
             for m in created_milestones
         ]
     }
+
 
 
 @router.put("/milestones/{milestone_id}")
