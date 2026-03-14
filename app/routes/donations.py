@@ -13,7 +13,59 @@ from app.models.email_notification import EmailNotification
 from app.utils.email_crypto import encrypt_email
 from app.utils.email_service import send_email
 
+# router = APIRouter(prefix="/donations", tags=["Donations"])
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session, joinedload
+from app.core.security import get_db, get_current_user
+from app.models.donation import Donation
+from app.models.campaign import Campaign
+
 router = APIRouter(prefix="/donations", tags=["Donations"])
+
+@router.get("/ngo-donation-dashboard")
+def ngo_donation_dashboard(user = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Returns all donations for campaigns owned by the logged-in NGO.
+    Marks donations as anonymous if donor chose anonymous or email not provided.
+    """
+    # 1️⃣ Get campaigns owned by this NGO
+    campaigns = db.query(Campaign).filter(Campaign.ngo_id == user.ngo_id).all()
+    campaign_ids = [c.id for c in campaigns]
+
+    # 2️⃣ Fetch donations for these campaigns
+    donations = (
+        db.query(Donation)
+        .options(joinedload(Donation.campaign), joinedload(Donation.milestone))
+        .filter(Donation.campaign_id.in_(campaign_ids))
+        .order_by(Donation.created_at.desc())
+        .all()
+    )
+
+    # 3️⃣ Prepare data for frontend
+    donation_list = []
+    for d in donations:
+        donation_list.append({
+            "id": d.id,
+            "transaction_id": d.transaction_id,
+            "amount": d.amount,
+            "is_anonymous": d.is_anonymous or not bool(d.hashed_email),
+            "campaign": {"id": d.campaign.id, "title": d.campaign.title} if d.campaign else None,
+            "milestone": {"id": d.milestone.id, "title": d.milestone.title} if d.milestone else None,
+            "created_at": d.created_at.isoformat(),
+        })
+
+    # 4️⃣ Aggregate stats
+    total_raised = sum(d["amount"] for d in donation_list)
+    total_donors = len(donation_list)
+    avg_donation = total_raised / total_donors if total_donors > 0 else 0
+
+    return {
+        "donations": donation_list,
+        "total_raised": total_raised,
+        "total_donors": total_donors,
+        "avg_donation": avg_donation,
+    }
 
 
 # ── 1. POST /donations/ ── Make a donation ────────────────
