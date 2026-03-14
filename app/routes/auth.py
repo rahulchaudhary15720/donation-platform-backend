@@ -279,7 +279,7 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
     verification = (
         db.query(EmailVerification)
         .filter(EmailVerification.token == payload.token)
-        .filter(EmailVerification.verified_at.is_(None))
+        # .filter(EmailVerification.verified_at.is_(None))
         .first()
     )
 
@@ -289,14 +289,14 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
         if user:
             user_email = user.email
 
-    if not verification:
-        raise HTTPException(
-            400,
-            detail={
-                "message": "Invalid or already used verification token",
-                "email": user_email
-            }
-        )
+    if not verification or verification.verified_at is not None:
+    raise HTTPException(
+        400,
+        detail={
+            "message": "Invalid or already used verification token",
+            "email": user_email
+        }
+    )
 
     if verification.expires_at < _utcnow():
         raise HTTPException(
