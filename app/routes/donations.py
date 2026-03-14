@@ -15,23 +15,30 @@ from app.utils.email_service import send_email
 
 # router = APIRouter(prefix="/donations", tags=["Donations"])
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from app.core.security import get_db, get_current_user
 from app.models.donation import Donation
 from app.models.campaign import Campaign
+from app.models.milestone import Milestone
 
 router = APIRouter(prefix="/donations", tags=["Donations"])
 
 @router.get("/ngo-donation-dashboard")
-def ngo_donation_dashboard(user = Depends(get_current_user), db: Session = Depends(get_db)):
+def ngo_donation_dashboard(user=Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Returns all donations for campaigns owned by the logged-in NGO.
     Marks donations as anonymous if donor chose anonymous or email not provided.
     """
+    if not user or not getattr(user, "ngo_id", None):
+        raise HTTPException(status_code=403, detail="User is not associated with any NGO")
+
     # 1️⃣ Get campaigns owned by this NGO
     campaigns = db.query(Campaign).filter(Campaign.ngo_id == user.ngo_id).all()
     campaign_ids = [c.id for c in campaigns]
+
+    if not campaign_ids:
+        return {"donations": [], "total_raised": 0, "total_donors": 0, "avg_donation": 0}
 
     # 2️⃣ Fetch donations for these campaigns
     donations = (
@@ -42,22 +49,33 @@ def ngo_donation_dashboard(user = Depends(get_current_user), db: Session = Depen
         .all()
     )
 
-    # 3️⃣ Prepare data for frontend
+    # 3️⃣ Prepare donation list for frontend
     donation_list = []
+    donor_ids = set()
+    total_raised = 0
+
     for d in donations:
+        # Safely handle missing campaign/milestone
+        campaign_info = {"id": d.campaign.id, "title": d.campaign.title} if d.campaign else {"id": None, "title": "Unknown"}
+        milestone_info = {"id": d.milestone.id, "title": d.milestone.title, "status": getattr(d.milestone, "status", None)} if d.milestone else {"id": None, "title": "Unknown", "status": None}
+
+        is_anonymous = d.is_anonymous or not bool(d.hashed_email)
+
         donation_list.append({
             "id": d.id,
             "transaction_id": d.transaction_id,
             "amount": d.amount,
-            "is_anonymous": d.is_anonymous or not bool(d.hashed_email),
-            "campaign": {"id": d.campaign.id, "title": d.campaign.title} if d.campaign else None,
-            "milestone": {"id": d.milestone.id, "title": d.milestone.title} if d.milestone else None,
+            "is_anonymous": is_anonymous,
+            "campaign": campaign_info,
+            "milestone": milestone_info,
             "created_at": d.created_at.isoformat(),
         })
 
-    # 4️⃣ Aggregate stats
-    total_raised = sum(d["amount"] for d in donation_list)
-    total_donors = len(donation_list)
+        total_raised += d.amount
+        if d.user_id and not is_anonymous:
+            donor_ids.add(d.user_id)
+
+    total_donors = len(donor_ids)
     avg_donation = total_raised / total_donors if total_donors > 0 else 0
 
     return {
