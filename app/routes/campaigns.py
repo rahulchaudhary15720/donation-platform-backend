@@ -359,6 +359,31 @@ def validate_file_size(file: UploadFile):
             detail=f"File too large. Max allowed size is {MAX_FILE_SIZE / (1024*1024)} MB"
         )
 
+@router.get("/{campaign_id}")
+def get_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db)
+):
+    campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+
+    if not campaign:
+        raise HTTPException(404, "Campaign not found")
+
+    milestones = (
+        db.query(Milestone)
+        .filter(Milestone.campaign_id == campaign_id)
+        .order_by(Milestone.order_number.asc())
+        .all()
+    )
+
+    ngo = db.query(NGO).filter(NGO.id == campaign.ngo_id).first()
+
+    return _serialize_campaign_with_milestones(
+        campaign,
+        milestones,
+        ngo_name=ngo.name if ngo else None
+    )
+
 @router.post("/campaign")
 def create_campaign(
     title: str,
