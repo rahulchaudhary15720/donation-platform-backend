@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
+import json
 
 class Settings(BaseSettings):
     model_config = ConfigDict(env_file=".env")
@@ -22,11 +23,41 @@ class Settings(BaseSettings):
     FERNET_KEY: str
     CORS_ORIGINS: str = "http://localhost:3000"
     FRONTEND_URL: str = "http://localhost:3000"
+    CORS_ALLOW_VERCEL_PREVIEWS: bool = True
     EMAIL_VERIFICATION_EXPIRE_HOURS: int = 24
     PASSWORD_RESET_EXPIRE_HOURS: int = 2
 
     def get_cors_origins(self) -> list[str]:
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        raw = (self.CORS_ORIGINS or "").strip()
+
+        origins: list[str] = []
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    origins.extend(str(origin).strip() for origin in parsed if str(origin).strip())
+            except json.JSONDecodeError:
+                pass
+
+        if not origins:
+            origins.extend(origin.strip() for origin in raw.split(",") if origin.strip())
+
+        if self.FRONTEND_URL and self.FRONTEND_URL.strip():
+            origins.append(self.FRONTEND_URL.strip())
+
+        unique_origins: list[str] = []
+        seen: set[str] = set()
+        for origin in origins:
+            if origin not in seen:
+                unique_origins.append(origin)
+                seen.add(origin)
+
+        return unique_origins
+
+    def get_cors_origin_regex(self) -> str | None:
+        if self.CORS_ALLOW_VERCEL_PREVIEWS:
+            return r"https://([a-zA-Z0-9-]+\.)*vercel\.app"
+        return None
 
 
 settings = Settings()
