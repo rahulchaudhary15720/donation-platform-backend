@@ -364,14 +364,24 @@ def get_campaign(
     campaign_id: int,
     db: Session = Depends(get_db)
 ):
-    campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    campaign = (
+        db.query(Campaign)
+        .filter(
+            Campaign.id == campaign_id,
+            Campaign.status == "active",
+        )
+        .first()
+    )
 
     if not campaign:
         raise HTTPException(404, "Campaign not found")
 
     milestones = (
         db.query(Milestone)
-        .filter(Milestone.campaign_id == campaign_id)
+        .filter(
+            Milestone.campaign_id == campaign_id,
+            Milestone.status != "locked",
+        )
         .order_by(Milestone.order_number.asc())
         .all()
     )
@@ -434,10 +444,17 @@ def update_campaign(
     db: Session = Depends(get_db),
     current_user: User = Depends(ngo_required)
 ):
+    ngo = db.query(NGO).filter(NGO.user_id == current_user.id).first()
+    if not ngo:
+        raise HTTPException(400, "Complete NGO profile first")
+
     campaign = db.query(Campaign).get(campaign_id)
 
     if not campaign:
         raise HTTPException(404, "Campaign not found")
+
+    if campaign.ngo_id != ngo.id:
+        raise HTTPException(403, "You can only update your own campaigns")
 
     campaign.title = payload.title
     campaign.description = payload.description
@@ -456,9 +473,16 @@ def delete_campaign(
     db: Session = Depends(get_db),
     current_user: User = Depends(ngo_required)
 ):
+    ngo = db.query(NGO).filter(NGO.user_id == current_user.id).first()
+    if not ngo:
+        raise HTTPException(400, "Complete NGO profile first")
+
     campaign = db.query(Campaign).get(campaign_id)
     if not campaign:
         raise HTTPException(404, "Not found")
+
+    if campaign.ngo_id != ngo.id:
+        raise HTTPException(403, "You can only delete your own campaigns")
 
     db.delete(campaign)
     db.commit()

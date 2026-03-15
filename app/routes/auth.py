@@ -415,7 +415,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
         .delete()
 
     # Generate token — store only the hash so a DB leak can't be replayed
-    raw_token = secrets.token_urlsafe(48)
+    raw_token = secrets.token_urlsafe(32)
     token_hash = _hash_refresh_token(raw_token)   # same SHA-256 helper
     expires_at = _utcnow() + timedelta(minutes=PASSWORD_RESET_EXPIRE_MINUTES)
 
@@ -449,7 +449,8 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
     5. Clear the account lockout state (user proved they own the email).
     6. Revoke ALL existing refresh tokens (all sessions invalidated on pw change).
     """
-    token_hash = _hash_refresh_token(payload.token)
+    normalized_token = "".join(payload.token.split())
+    token_hash = _hash_refresh_token(normalized_token)
     stored = (
         db.query(PasswordResetToken)
         .filter(PasswordResetToken.token_hash == token_hash)

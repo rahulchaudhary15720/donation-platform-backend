@@ -2,6 +2,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
 from datetime import datetime, timedelta
 
 from app.core.security import get_db, get_current_user
@@ -107,10 +108,19 @@ def donate(
     ).first()
     if not milestone:
         raise HTTPException(status_code=404, detail="Milestone not found for this campaign")
+    if milestone.status != "active":
+        raise HTTPException(status_code=400, detail="Donations are only allowed for active milestones")
 
     # Validate amount
     if amount <= 0:
         raise HTTPException(status_code=422, detail="Donation amount must be greater than 0")
+
+    remaining_amount = float(campaign.target_amount or 0) - float(campaign.raised_amount or 0)
+    if amount > remaining_amount:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Donation exceeds remaining campaign target. Max allowed is ₹{remaining_amount:.2f}",
+        )
 
     # Generate clean unique transaction ID
     transaction_id = f"TXN-{uuid.uuid4().hex[:12].upper()}"  # e.g. TXN-A3F8BC2E91D4
@@ -130,6 +140,29 @@ def donate(
 
     # Update campaign raised_amount
     campaign.raised_amount = (campaign.raised_amount or 0) + amount
+
+    milestone_total_raised = (
+        db.query(func.coalesce(func.sum(Donation.amount), 0.0))
+        .filter(Donation.milestone_id == milestone.id)
+        .scalar()
+    ) or 0.0
+
+    if milestone.status != "completed" and milestone_total_raised >= float(milestone.target_amount or 0):
+        milestone.status = "completed"
+
+        next_milestone = (
+            db.query(Milestone)
+            .filter(
+                Milestone.campaign_id == campaign.id,
+                Milestone.order_number > milestone.order_number,
+                Milestone.status == "locked",
+            )
+            .order_by(Milestone.order_number.asc())
+            .first()
+        )
+        if next_milestone:
+            next_milestone.status = "active"
+
     db.commit()
 
     # Handle anonymous donor email

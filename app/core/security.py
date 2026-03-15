@@ -11,6 +11,7 @@ from app.models.user import User
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = HTTPBearer()
+oauth2_scheme_optional = HTTPBearer(auto_error=False)
 
 
 
@@ -71,4 +72,35 @@ def get_current_user(
         raise HTTPException(status_code=403, detail="Account not activated")
     if not user.email_verified:
         raise HTTPException(status_code=403, detail="Email not verified")
+    return user
+
+
+def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+):
+    if not credentials:
+        return None
+
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        token_type = payload.get("type")
+        if token_type and token_type != "access":
+            return None
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        try:
+            user_id = int(user_id)
+        except (TypeError, ValueError):
+            return None
+    except JWTError:
+        return None
+
+    user = db.get(User, user_id)
+    if not user or not user.is_active or not user.email_verified:
+        return None
+
     return user

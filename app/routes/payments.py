@@ -21,13 +21,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import update as sa_update
+from sqlalchemy import func, update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
 from app.core.rate_limit import rate_limit
-from app.core.security import get_current_user, get_db
+from app.core.security import get_current_user, get_current_user_optional, get_db
 from app.models.campaign import Campaign
 from app.models.donation import Donation
 from app.models.email_notification import EmailNotification
@@ -101,7 +101,7 @@ def _verify_signature(order_id: str, payment_id: str, provided_signature: str) -
 )
 def initiate_payment(
     payload:      PaymentInitiateRequest,
-    current_user = Depends(get_current_user),
+    current_user = Depends(get_current_user_optional),
     db: Session  = Depends(get_db),
 ):
     """
@@ -112,6 +112,12 @@ def initiate_payment(
         Show "payment modal" (mock: auto-fill from response)
         POST /payments/verify    →  send back the three values above
     """
+    if not payload.is_anonymous and not current_user:
+        raise HTTPException(
+            status_code=401,
+            detail="Login required for non-anonymous donations",
+        )
+
     # ── Validate campaign ────────────────────────────────────────────────────
     campaign = db.query(Campaign).filter(
         Campaign.id     == payload.campaign_id,
@@ -119,6 +125,13 @@ def initiate_payment(
     ).first()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found or not active")
+
+    remaining_amount = float(campaign.target_amount or 0) - float(campaign.raised_amount or 0)
+    if payload.amount > remaining_amount:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Donation exceeds remaining campaign target. Max allowed is ₹{remaining_amount:.2f}",
+        )
 
     # ── Validate milestone ───────────────────────────────────────────────────
     milestone = db.query(Milestone).filter(
@@ -149,7 +162,7 @@ def initiate_payment(
     signature  = _compute_signature(order_id, payment_id)  # mock: pre-computed
 
     order = PaymentOrder(
-        user_id         = None if payload.is_anonymous else current_user.id,
+        user_id         = None if payload.is_anonymous or not current_user else current_user.id,
         campaign_id     = payload.campaign_id,
         milestone_id    = payload.milestone_id,
         amount          = payload.amount,
@@ -197,7 +210,7 @@ def initiate_payment(
 )
 def verify_payment(
     payload:      PaymentVerifyRequest,
-    current_user = Depends(get_current_user),
+    current_user = Depends(get_current_user_optional),
     db: Session  = Depends(get_db),
 ):
     """
@@ -252,7 +265,7 @@ def verify_payment(
     campaign = db.query(Campaign).filter(
         Campaign.id     == order.campaign_id,
         Campaign.status == "active",
-    ).first()
+    ).with_for_update().first()
     if not campaign:
         order.status = "failed"
         db.commit()
@@ -260,11 +273,20 @@ def verify_payment(
 
     milestone = db.query(Milestone).filter(
         Milestone.id == order.milestone_id,
-    ).first()
+    ).with_for_update().first()
     if not milestone:
         order.status = "failed"
         db.commit()
         raise HTTPException(status_code=400, detail="Milestone not found")
+
+    remaining_amount = float(campaign.target_amount or 0) - float(campaign.raised_amount or 0)
+    if order.amount > remaining_amount:
+        order.status = "failed"
+        db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Donation exceeds remaining campaign target. Max allowed is ₹{remaining_amount:.2f}",
+        )
 
     # ── Create Donation (the only authoritative record of money received) ────
     transaction_id = f"TXN-{uuid.uuid4().hex[:12].upper()}"
@@ -288,6 +310,28 @@ def verify_payment(
             .where(Campaign.id == order.campaign_id)
             .values(raised_amount=Campaign.raised_amount + order.amount)
         )
+
+        milestone_total_raised = (
+            db.query(func.coalesce(func.sum(Donation.amount), 0.0))
+            .filter(Donation.milestone_id == milestone.id)
+            .scalar()
+        ) or 0.0
+
+        if milestone.status != "completed" and milestone_total_raised >= float(milestone.target_amount or 0):
+            milestone.status = "completed"
+
+            next_milestone = (
+                db.query(Milestone)
+                .filter(
+                    Milestone.campaign_id == campaign.id,
+                    Milestone.order_number > milestone.order_number,
+                    Milestone.status == "locked",
+                )
+                .order_by(Milestone.order_number.asc())
+                .first()
+            )
+            if next_milestone:
+                next_milestone.status = "active"
 
         # ── Mark order as paid and link to donation ─────────────────────────
         order.status      = "paid"

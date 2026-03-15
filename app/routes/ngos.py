@@ -248,7 +248,10 @@ def get_ngo_with_campaigns(ngo_id: int, db: Session = Depends(get_db)):
 
     campaigns = (
         db.query(Campaign)
-        .filter(Campaign.ngo_id == ngo.id)
+        .filter(
+            Campaign.ngo_id == ngo.id,
+            Campaign.status == "active",
+        )
         .order_by(Campaign.created_at.desc())
         .all()
     )
@@ -258,7 +261,10 @@ def get_ngo_with_campaigns(ngo_id: int, db: Session = Depends(get_db)):
     if campaign_ids:
         milestones = (
             db.query(Milestone)
-            .filter(Milestone.campaign_id.in_(campaign_ids))
+            .filter(
+                Milestone.campaign_id.in_(campaign_ids),
+                Milestone.status != "locked",
+            )
             .order_by(Milestone.campaign_id.asc(), Milestone.order_number.asc())
             .all()
         )

@@ -55,7 +55,7 @@ Donation & Charity Platform Team
     send_email(email, subject, body)
 def send_password_reset_email(email: str, token: str):
     """Send password reset email to user"""
-    reset_url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
+    reset_url = f"{settings.FRONTEND_URL.rstrip('/')}/auth/reset-password?token={token}"
 
     subject = "Password Reset Request - Donation & Charity Platform"
 
