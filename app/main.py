@@ -15,11 +15,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=settings.get_cors_origins(),
-     allow_origins=[
-        "http://localhost:3000",
-        "https://donation-and-charity-platform.vercel.app"
-    ],
+    allow_origins=settings.get_cors_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
